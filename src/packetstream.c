@@ -337,12 +337,17 @@ int ps_packet_open(ps_packet_t *packet, ps_flags_t flags)
 		return ps_packet_openwrite(packet, flags);
 }
 
+#define MAX_SEM_WAIT_TRIES 6
+
 int ps_packet_openread(ps_packet_t *packet, ps_flags_t flags)
 {
 	__PS_BUFFER_VARS(packet->buffer)
 	ps_buffer_t *buffer = packet->buffer;
 	struct ps_packet_header_s *header;
+	unsigned int tries = 0;
 
+retry:
+	tries++;
 	if (flags & PS_PACKET_TRY) {
 		if (pthread_mutex_trylock(&state->read_mutex))
 			return EBUSY;
@@ -360,7 +365,10 @@ int ps_packet_openread(ps_packet_t *packet, ps_flags_t flags)
 		}
 	} else if (sem_wait(&state->written_packets)) {
 		pthread_mutex_unlock(&state->read_mutex);
-		return EINVAL;
+		if (tries < MAX_SEM_WAIT_TRIES)
+			goto retry;
+		else
+			return EINVAL;
 	}
 	__PS_CHECK_CANCEL_READ(state)
 
@@ -489,6 +497,7 @@ int ps_packet_cancel(ps_packet_t *packet)
 /* NOTE len is absolute packet size, not added to current reserved */
 int ps_packet_reserve(ps_packet_t *packet, size_t len)
 {
+	unsigned int tries = 0;
 	__PS_PACKET_VARS(packet)
 
 	if (len <= packet->reserved)
@@ -496,6 +505,8 @@ int ps_packet_reserve(ps_packet_t *packet, size_t len)
 
 	state->free_bytes -= len - packet->reserved;
 	while (state->free_bytes < 0) {
+retry:
+		tries++;
 		/* "consume" next free (=read) packet */
 		if (state->flags & PS_BUFFER_STATS)
 			buffer->write_wait_start = ps_buffer_utime(buffer);
@@ -505,8 +516,12 @@ int ps_packet_reserve(ps_packet_t *packet, size_t len)
 				state->free_bytes += len - packet->reserved;
 				return EBUSY;
 			}
-		} else if (sem_wait(&state->read_packets))
-			return EINVAL;
+		} else if (sem_wait(&state->read_packets)) {
+			if (tries < MAX_SEM_WAIT_TRIES)
+				goto retry;
+			else
+				return EINVAL;
+		}
 		__PS_CHECK_CANCEL_WRITE(state)
 
 		if (state->flags & PS_BUFFER_STATS)
