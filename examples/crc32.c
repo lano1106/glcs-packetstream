@@ -14,6 +14,7 @@
 #include <errno.h>
 
 #include <packetstream.h>
+#include "optimization.h"
 
 #define WRITER_COUNT 1
 #define READER_COUNT 2
@@ -46,15 +47,36 @@ void *writer_thread(void *addr)
 	while (1) {
 		size = DATA_MIN + rand() % (DATA_MAX - DATA_MIN);
 
-		if ((ret = ps_packet_open(&packet, PS_PACKET_WRITE))) {
+		if (unlikely((ret = ps_packet_open(&packet, PS_PACKET_WRITE)))) {
 			if (ret != EINTR)
 				printf("writer_thread(): ps_packet_open() failed\n");
 			break;
 		}
 
-		ps_packet_setsize(&packet, size);
-		ps_packet_write(&packet, temp, size);
-		ps_packet_close(&packet);
+		if (unlikely((ret = ps_packet_setsize(&packet, size)))) {
+			if (ret == EINTR)
+				break;
+			printf("writer_thread(): ps_packet_setsize() failed\n");
+			if(likely(!ps_packet_cancel(&packet)))
+				continue;
+			else {
+				printf("writer_thread(): ps_packet_cancel() failed\n");
+				ps_buffer_cancel(buffer);
+				break;
+			}
+		}
+		if (unlikely(ps_packet_write(&packet, temp, size))) {
+			printf("writer_thread(): ps_packet_write() failed\n");
+			ps_buffer_cancel(buffer);
+			break;
+		}
+		if (unlikely((ret = ps_packet_close(&packet)))) {
+			if (ret != EINTR) {
+				printf("writer_thread(): ps_packet_close() failed\n");
+				ps_buffer_cancel(buffer);
+			}
+			break;
+		}
 	}
 
 	ps_packet_destroy(&packet);
@@ -91,7 +113,13 @@ void *reader_thread(void *addr)
 
 		calcCRC32(dma, size);
 
-		ps_packet_close(&packet);
+		if (unlikely((ret = ps_packet_close(&packet)))) {
+			if (ret != EINTR) {
+				printf("reader_thread(): ps_packet_close() failed\n");
+				ps_buffer_cancel(buffer);
+			}
+			break;
+		}
 	}
 
 	ps_packet_destroy(&packet);
@@ -164,3 +192,4 @@ int main(int argc, char *argv[])
 
 	return 0;
 }
+
