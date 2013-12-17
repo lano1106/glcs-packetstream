@@ -423,6 +423,7 @@ int ps_packet_setsize(ps_packet_t *packet, size_t size)
 {
 	int ret;
 	size_t res = 0;
+	size_t write_next;
 	__PS_PACKET(packet)
 
 	if ((!(packet->flags & PS_PACKET_WRITE)) | (packet->flags & PS_PACKET_SIZE_SET))
@@ -434,31 +435,31 @@ int ps_packet_setsize(ps_packet_t *packet, size_t size)
 	if ((ret = ps_packet_reserve(packet, size)))
 		return ret;
 
-	header->size = size;
-	packet->flags |= PS_PACKET_SIZE_SET;
-	packet->flags &= ~PS_PACKET_TRY;
-
-	state->write_next = (sizeof(struct ps_packet_header_s) + state->write_next + header->size) % state->size;
-	if (state->write_next + sizeof(struct ps_packet_header_s) > state->size) {
-		res = state->size - state->write_next;
-		state->write_next = 0;
+	write_next = (sizeof(struct ps_packet_header_s) + state->write_next + size) % state->size;
+	if (write_next + sizeof(struct ps_packet_header_s) > state->size) {
+		res = state->size - write_next;
+		write_next = 0;
 	}
 
 	/* we must set next header NULL */
+	packet->flags &= ~PS_PACKET_TRY;
 	if ((ret = ps_packet_reserve(packet, sizeof(struct ps_packet_header_s) + size + res)))
 		return ret;
-	memset(&buffer->buffer[state->write_next], 0, sizeof(struct ps_packet_header_s));
 
-	/* free bytes */
+	/*
+	 * free unused reserved bytes.
+	 */
 	state->free_bytes += packet->reserved - (size + sizeof(struct ps_packet_header_s) + res);
+	header->size = size;
+	packet->flags |= PS_PACKET_SIZE_SET;
+	state->write_next = write_next;
+
+	memset(&buffer->buffer[state->write_next], 0, sizeof(struct ps_packet_header_s));
 
 	pthread_mutex_unlock(&state->write_mutex);
 
 	/* cut fakedma */
-	if ((ret = ps_packet_fakedma_cut(packet, size)))
-		return ret; /* if this fails... */
-
-	return 0;
+	return ps_packet_fakedma_cut(packet, size);
 }
 
 int ps_packet_close(ps_packet_t *packet)
@@ -519,10 +520,11 @@ retry:
 		} else if (sem_wait(&state->read_packets)) {
 			if (tries < MAX_SEM_WAIT_TRIES)
 				goto retry;
-			else
+			else {
+				state->free_bytes += len - packet->reserved;
 				return EINVAL;
+			}
 		}
-		__PS_CHECK_CANCEL_WRITE(state)
 
 		if (state->flags & PS_BUFFER_STATS)
 			buffer->stats->write_wait_usec += ps_buffer_utime(buffer) - buffer->write_wait_start;
@@ -536,6 +538,9 @@ retry:
 				state->free_bytes += state->size - state->read_first;
 				state->read_first = 0;
 			}
+			/* Once read_packets semaphore decremented, you need to process it before cancelling the
+			   write to not lose buffer space */
+			__PS_CHECK_CANCEL_WRITE(state)
 		} while (!sem_trywait(&state->read_packets));
 	}
 
