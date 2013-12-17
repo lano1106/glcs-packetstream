@@ -146,21 +146,21 @@ struct ps_fake_dma_s {
 __inline__ static int ps_packet_check(ps_packet_t *packet);
 __inline__ static int ps_buffer_check(ps_buffer_t *buffer);
 
-int ps_packet_openread(ps_packet_t *packet, ps_flags_t flags);
-int ps_packet_openwrite(ps_packet_t *packet, ps_flags_t flags);
+static int ps_packet_openread(ps_packet_t *packet, ps_flags_t flags);
+static int ps_packet_openwrite(ps_packet_t *packet, ps_flags_t flags);
 
-int ps_packet_closeread(ps_packet_t *packet);
-int ps_packet_closewrite(ps_packet_t *packet);
+static int ps_packet_closeread(ps_packet_t *packet);
+static int ps_packet_closewrite(ps_packet_t *packet);
 
-int ps_packet_reserve(ps_packet_t *packet, size_t len);
+static int ps_packet_reserve(ps_packet_t *packet, size_t len);
 
-int ps_packet_fakedma_alloc(ps_packet_t *packet, struct ps_fake_dma_s **fake_dma, size_t size);
-int ps_packet_fakedma_free(ps_packet_t *packet, struct ps_fake_dma_s *fake_dma);
-int ps_packet_fakedma_cut(ps_packet_t *packet, size_t size);
-int ps_packet_fakedma_commitall(ps_packet_t *packet);
-int ps_packet_fakedma_freeall(ps_packet_t *packet);
+static int ps_packet_fakedma_alloc(ps_packet_t *packet, struct ps_fake_dma_s **fake_dma, size_t size);
+static int ps_packet_fakedma_free(ps_packet_t *packet, struct ps_fake_dma_s *fake_dma);
+static int ps_packet_fakedma_cut(ps_packet_t *packet, size_t size);
+static int ps_packet_fakedma_commitall(ps_packet_t *packet);
+static int ps_packet_fakedma_freeall(ps_packet_t *packet);
 
-unsigned long ps_buffer_utime(ps_buffer_t *buffer);
+static unsigned long ps_buffer_utime(ps_buffer_t *buffer);
 
 int ps_buffer_init(ps_buffer_t *buffer, ps_bufferattr_t *attr)
 {
@@ -804,12 +804,9 @@ int ps_packet_fakedma_alloc(ps_packet_t *packet, struct ps_fake_dma_s **fake_dma
 	}
 
 	if (!find) {
-		if (!(find = (struct ps_fake_dma_s *) malloc(sizeof(struct ps_fake_dma_s))))
+		if (!(find = (struct ps_fake_dma_s *)calloc(1,sizeof(struct ps_fake_dma_s))))
 			return ENOMEM;
-		memset(find, 0, sizeof(struct ps_fake_dma_s));
 
-		find->mem_size = size;
-		find->mem = malloc(find->mem_size);
 		find->free = 1;
 		find->next = packet->fake_dma;
 		packet->fake_dma = find;
