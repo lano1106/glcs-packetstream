@@ -190,7 +190,8 @@ int ps_buffer_init(ps_buffer_t *buffer, ps_bufferattr_t *attr)
 			stats_size = sizeof(ps_stats_t);
 
 		if (attr->shmid == PS_SHM_CREATE)
-			shmid = shmget(IPC_PRIVATE, attr->size + sizeof(struct ps_state_s) + stats_size, IPC_CREAT | IPC_EXCL | attr->shmmode);
+			shmid = shmget(IPC_PRIVATE, attr->size + sizeof(struct ps_state_s) +
+					stats_size, IPC_CREAT | IPC_EXCL | attr->shmmode);
 		else
 			flags |= PS_BUFFER_READY;
 
@@ -215,7 +216,7 @@ int ps_buffer_init(ps_buffer_t *buffer, ps_bufferattr_t *attr)
 	}
 #endif
 
-	if (unlikely((buffer->buffer == NULL) | (buffer->state == NULL)))
+	if (unlikely((buffer->buffer == NULL) || (buffer->state == NULL)))
 		return ENOMEM;
 
 	if (unlikely((flags & PS_BUFFER_STATS) && (buffer->stats == NULL)))
@@ -306,8 +307,7 @@ int ps_packet_destroy(ps_packet_t *packet)
 		free(del);
 	}
 	packet->fake_dma = NULL;
-
-	packet->buffer = NULL;
+	packet->buffer   = NULL;
 	return 0;
 }
 
@@ -346,8 +346,6 @@ int ps_packet_openread(ps_packet_t *packet, ps_flags_t flags)
 	struct ps_packet_header_s *header;
 	unsigned int tries = 0;
 
-retry:
-	tries++;
 	if (flags & PS_PACKET_TRY) {
 		if (pthread_mutex_trylock(&state->read_mutex))
 			return EBUSY;
@@ -363,12 +361,17 @@ retry:
 			pthread_mutex_unlock(&state->read_mutex);
 			return EBUSY;
 		}
-	} else if (sem_wait(&state->written_packets)) {
-		pthread_mutex_unlock(&state->read_mutex);
-		if (tries < MAX_SEM_WAIT_TRIES)
-			goto retry;
-		else
-			return EINVAL;
+	} else {
+retry:
+		tries++;
+		if (sem_wait(&state->written_packets)) {
+			if (tries < MAX_SEM_WAIT_TRIES)
+				goto retry;
+			else {
+				pthread_mutex_unlock(&state->read_mutex);
+				return EINVAL;
+			}
+		}
 	}
 	__PS_CHECK_CANCEL_READ(state)
 
@@ -382,7 +385,8 @@ retry:
 
 	header = (struct ps_packet_header_s *) packet->header;
 
-	state->read_next = (sizeof(struct ps_packet_header_s) + state->read_next + header->size) % state->size;
+	state->read_next = (sizeof(struct ps_packet_header_s) +
+			    state->read_next + header->size) % state->size;
 	if (state->read_next + sizeof(struct ps_packet_header_s) > state->size)
 		state->read_next = 0;
 
@@ -426,7 +430,7 @@ int ps_packet_setsize(ps_packet_t *packet, size_t size)
 	size_t write_next;
 	__PS_PACKET(packet)
 
-	if (unlikely((!(packet->flags & PS_PACKET_WRITE)) | (packet->flags & PS_PACKET_SIZE_SET)))
+	if (unlikely((!(packet->flags & PS_PACKET_WRITE)) || (packet->flags & PS_PACKET_SIZE_SET)))
 		return EINVAL;
 
 	if (unlikely(size + sizeof(struct ps_packet_header_s) * 2 > state->size))
@@ -498,7 +502,7 @@ int ps_packet_cancel(ps_packet_t *packet)
 /* NOTE len is absolute packet size, not added to current reserved */
 int ps_packet_reserve(ps_packet_t *packet, size_t len)
 {
-	unsigned int tries = 0;
+	unsigned int tries;
 	__PS_PACKET_VARS(packet)
 
 	if (len <= packet->reserved)
@@ -506,8 +510,7 @@ int ps_packet_reserve(ps_packet_t *packet, size_t len)
 
 	state->free_bytes -= len - packet->reserved;
 	while (state->free_bytes < 0) {
-retry:
-		tries++;
+		tries = 0;
 		/* "consume" next free (=read) packet */
 		if (state->flags & PS_BUFFER_STATS)
 			buffer->write_wait_start = ps_buffer_utime(buffer);
@@ -517,35 +520,43 @@ retry:
 				state->free_bytes += len - packet->reserved;
 				return EBUSY;
 			}
-		} else if (sem_wait(&state->read_packets)) {
-			if (tries < MAX_SEM_WAIT_TRIES)
-				goto retry;
-			else {
-				state->free_bytes += len - packet->reserved;
-				return EINVAL;
+		} else {
+retry:
+			tries++;
+			if (sem_wait(&state->read_packets)) {
+				if (tries < MAX_SEM_WAIT_TRIES)
+					goto retry;
+				else {
+					state->free_bytes += len - packet->reserved;
+					return EINVAL;
+				}
 			}
 		}
 
 		if (state->flags & PS_BUFFER_STATS)
-			buffer->stats->write_wait_usec += ps_buffer_utime(buffer) - buffer->write_wait_start;
+			buffer->stats->write_wait_usec +=
+				ps_buffer_utime(buffer) - buffer->write_wait_start;
 
 		do {
 			header = (struct ps_packet_header_s *) &buffer->buffer[state->read_first];
 
 			state->free_bytes += sizeof(struct ps_packet_header_s) + header->size;
-			state->read_first = (state->read_first + sizeof(struct ps_packet_header_s) + header->size) % state->size;
+			state->read_first = (state->read_first +
+					     sizeof(struct ps_packet_header_s) +
+					     header->size) % state->size;
 			if (state->read_first + sizeof(struct ps_packet_header_s) > state->size) {
 				state->free_bytes += state->size - state->read_first;
 				state->read_first = 0;
 			}
-			/* Once read_packets semaphore decremented, you need to process it before cancelling the
-			   write to not lose buffer space */
+			/*
+			 * Once read_packets semaphore decremented, you need to process it
+			 * before cancelling the write to not lose buffer space
+			 */
 			__PS_CHECK_CANCEL_WRITE(state)
 		} while (!sem_trywait(&state->read_packets));
 	}
 
 	packet->reserved = len;
-
 	return 0;
 }
 
@@ -569,7 +580,8 @@ int ps_packet_closeread(ps_packet_t *packet)
 		pos = packet->buffer_pos;
 
 		do {
-			pos = (pos + sizeof(struct ps_packet_header_s) + header->size) % state->size;
+			pos = (pos + sizeof(struct ps_packet_header_s) +
+			       header->size) % state->size;
 			if (pos + sizeof(struct ps_packet_header_s) > state->size)
 				pos = 0;
 
@@ -620,7 +632,8 @@ int ps_packet_closewrite(ps_packet_t *packet)
 		pos = packet->buffer_pos;
 
 		do {
-			pos = (pos + sizeof(struct ps_packet_header_s) + header->size) % state->size;
+			pos = (pos + sizeof(struct ps_packet_header_s) +
+			       header->size) % state->size;
 			if (pos + sizeof(struct ps_packet_header_s) > state->size)
 				pos = 0;
 
@@ -637,7 +650,6 @@ int ps_packet_closewrite(ps_packet_t *packet)
 
 	packet->header = NULL;
 	packet->flags = 0;
-
 	return 0;
 }
 
@@ -656,7 +668,8 @@ int ps_packet_read(ps_packet_t *packet, void *dest, size_t size)
 	if (unlikely(packet->pos + size > header->size))
 		return EINVAL;
 
-	offs = (packet->buffer_pos + sizeof(struct ps_packet_header_s) + packet->pos) % state->size;
+	offs = (packet->buffer_pos + sizeof(struct ps_packet_header_s) +
+		packet->pos) % state->size;
 	if (offs + size > state->size) {
 		memcpy(dest, &buffer->buffer[offs], state->size - offs);
 
@@ -666,7 +679,6 @@ int ps_packet_read(ps_packet_t *packet, void *dest, size_t size)
 	}
 
 	memcpy(dest, &buffer->buffer[offs], rlen);
-
 	packet->pos += size;
 
 	return 0;
@@ -682,14 +694,16 @@ int ps_packet_write(ps_packet_t *packet, void *src, size_t size)
 		if (unlikely(packet->pos + size > header->size))
 			return EINVAL;
 	} else {
-		if (unlikely(packet->pos + size + sizeof(struct ps_packet_header_s) * 2 > state->size))
+		if (unlikely(packet->pos + size + sizeof(struct ps_packet_header_s)*2 >
+			     state->size))
 			return ENOBUFS;
 
 		if ((ret = ps_packet_reserve(packet, packet->pos + size)))
 			return ret;
 	}
 
-	offs = (packet->buffer_pos + sizeof(struct ps_packet_header_s) + packet->pos) % state->size;
+	offs = (packet->buffer_pos + sizeof(struct ps_packet_header_s) +
+		packet->pos) % state->size;
 	if (offs + size > state->size) {
 		memcpy(&buffer->buffer[offs], src, state->size - offs);
 
@@ -714,13 +728,15 @@ int ps_packet_dma(ps_packet_t *packet, void **mem, size_t size, ps_flags_t flags
 	size_t offs;
 	__PS_PACKET(packet)
 
-	if ((packet->flags & PS_PACKET_SIZE_SET) | (packet->flags & PS_PACKET_READ)) {
+	if ((packet->flags & PS_PACKET_SIZE_SET) || (packet->flags & PS_PACKET_READ)) {
 		if (unlikely(packet->pos + size > header->size))
 			return EINVAL;
-	} else if (unlikely(packet->pos + size + sizeof(struct ps_packet_header_s) * 2 > state->size))
+	} else if (unlikely(packet->pos + size + sizeof(struct ps_packet_header_s)*2 >
+			    state->size))
 		return ENOBUFS;
 
-	offs = (packet->buffer_pos + sizeof(struct ps_packet_header_s) + packet->pos) % state->size;
+	offs = (packet->buffer_pos + sizeof(struct ps_packet_header_s) +
+		packet->pos) % state->size;
 
 	if (offs + size <= state->size) {
 		/* real stuff */
@@ -781,7 +797,7 @@ int ps_packet_seek(ps_packet_t *packet, size_t pos)
 	int ret;
 	__PS_PACKET(packet)
 
-	if ((packet->flags & PS_PACKET_SIZE_SET) | (packet->flags & PS_PACKET_READ)) {
+	if ((packet->flags & PS_PACKET_SIZE_SET) || (packet->flags & PS_PACKET_READ)) {
 		if (unlikely(pos > header->size))
 			return EINVAL;
 	}
@@ -990,7 +1006,7 @@ int ps_bufferattr_setflags(ps_bufferattr_t *attr, ps_flags_t flags)
 	if (unlikely(attr == NULL))
 		return EINVAL;
 
-	if (unlikely((flags & PS_BUFFER_READY) | (flags & PS_BUFFER_CANCELLED)))
+	if (unlikely((flags & PS_BUFFER_READY) || (flags & PS_BUFFER_CANCELLED)))
 		return EINVAL;
 
 #ifndef __PS_SHM
