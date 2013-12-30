@@ -167,7 +167,7 @@ typedef struct {
 	/** time in nanoseconds consumer has waited for ready item */
 	uint64_t read_wait_nsec;
 	/** time in nanoseconds producer has waited for free space */
-	uint64_t write_wait_usec;
+	uint64_t write_wait_nsec;
 	/** time in nanoseconds since buffer was created */
 	uint64_t utime;
 } ps_stats_t;
