@@ -45,6 +45,7 @@
 
 #include <stddef.h>
 #include <stdio.h>
+#include <stdint.h>
 
 #ifdef WIN32
 # define IPC_PRIVATE 0
@@ -163,12 +164,12 @@ typedef struct {
 	size_t read_bytes;
 	/** amount of data written */
 	size_t written_bytes;
-	/** time in microseconds consumer has waited for ready item */
-	unsigned long read_wait_usec;
-	/** time in microseconds producer has waited for free space */
-	unsigned long write_wait_usec;
-	/** time in microseconds since buffer was created */
-	unsigned long utime;
+	/** time in nanoseconds consumer has waited for ready item */
+	uint64_t read_wait_nsec;
+	/** time in nanoseconds producer has waited for free space */
+	uint64_t write_wait_usec;
+	/** time in nanoseconds since buffer was created */
+	uint64_t utime;
 } ps_stats_t;
 
 /**
@@ -199,10 +200,10 @@ typedef struct {
 	ps_stats_t *stats;
 	/** shared memory id */
 	int shmid;
-	/** time in microseconds when consumer entered waiting mode last time */
-	unsigned long read_wait_start;
-	/** time in microseconds when producer entered waiting mode last time */
-	unsigned long write_wait_start;
+	/** time in nanoseconds when consumer entered waiting mode last time */
+	uint64_t read_wait_start;
+	/** time in nanoseconds when producer entered waiting mode last time */
+	uint64_t write_wait_start;
 } ps_buffer_t;
 
 /**

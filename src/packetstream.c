@@ -98,7 +98,7 @@ struct ps_state_s {
 	sem_t written_packets;
 #ifndef WIN32
 	/** absolute time (since EPOCH) when this buffer was created */
-	struct timeval create_time;
+	struct timespec create_time;
 #endif
 };
 
@@ -160,7 +160,7 @@ static int ps_packet_fakedma_cut(ps_packet_t *packet, size_t size);
 static int ps_packet_fakedma_commitall(ps_packet_t *packet);
 static int ps_packet_fakedma_freeall(ps_packet_t *packet);
 
-static unsigned long ps_buffer_utime(ps_buffer_t *buffer);
+static uint64_t ps_buffer_utime(ps_buffer_t *buffer);
 
 int ps_buffer_init(ps_buffer_t *buffer, ps_bufferattr_t *attr)
 {
@@ -249,7 +249,7 @@ int ps_buffer_init(ps_buffer_t *buffer, ps_bufferattr_t *attr)
 
 	pthread_mutexattr_destroy(&mutexattr);
 
-	gettimeofday(&state->create_time, NULL);
+	clock_gettime(CLOCK_MONOTONIC, &state->create_time);
 
 	state->flags |= PS_BUFFER_READY;
 
@@ -376,7 +376,7 @@ retry:
 	__PS_CHECK_CANCEL_READ(state)
 
 	if (state->flags & PS_BUFFER_STATS)
-		buffer->stats->read_wait_usec += ps_buffer_utime(buffer) - buffer->read_wait_start;
+		buffer->stats->read_wait_nsec += ps_buffer_utime(buffer) - buffer->read_wait_start;
 
 	packet->flags = flags & ~PS_PACKET_TRY;
 	packet->buffer_pos = state->read_next;
@@ -534,7 +534,7 @@ retry:
 		}
 
 		if (state->flags & PS_BUFFER_STATS)
-			buffer->stats->write_wait_usec +=
+			buffer->stats->write_wait_nsec +=
 				ps_buffer_utime(buffer) - buffer->write_wait_start;
 
 		do {
@@ -1052,24 +1052,23 @@ int ps_bufferattr_setshmmode(ps_bufferattr_t *attr, int mode)
 #endif
 }
 
-
-unsigned long ps_buffer_utime(ps_buffer_t *buffer)
+uint64_t ps_buffer_utime(ps_buffer_t *buffer)
 {
 #ifdef __PS_STATS
 	__PS_BUFFER_VARS(buffer)
-	struct timeval tv;
+	struct timespec ts;
 
-	gettimeofday(&tv, NULL);
+	clock_gettime(CLOCK_MONOTONIC, &ts);
 
-	tv.tv_sec -= state->create_time.tv_sec;
-	tv.tv_usec -= state->create_time.tv_usec;
+	ts.tv_sec  -= state->create_time.tv_sec;
+	ts.tv_nsec -= state->create_time.tv_nsec;
 
-	if (tv.tv_usec < 0) {
-		tv.tv_sec--;
-		tv.tv_usec += 1000000;
+	if (ts.tv_nsec < 0) {
+		ts.tv_sec--;
+		ts.tv_nsec += 1000000000;
 	}
 
-	return (unsigned long) tv.tv_sec * 1000000 + (unsigned long) tv.tv_usec;
+	return (uint64_t) ts.tv_sec * 1000000000 + (uint64_t) ts.tv_nsec;
 #else
 	return 0;
 #endif
@@ -1115,25 +1114,25 @@ void ps_stats_text_hnum(size_t num, FILE *stream)
 
 int ps_stats_text(ps_stats_t *stats, FILE *stream)
 {
-	float secs = ((float) stats->utime) / 1000000.0f;
+	double secs = ((double) stats->utime) / 1000000000.0;
 
 	/* fprintf(stream, "ps_stats_text()\n"); */
 	fprintf(stream, " run time    : %f secs\n", secs);
 
-	if ((stats->utime > 0) && (secs >= 0.5f)) {
+	if ((stats->utime > 0) && (secs >= 0.5)) {
 		fprintf(stream, " averages\n");
 		fprintf(stream, "  written\n");
 		fprintf(stream, "   packets   : ");
 		ps_stats_text_hfloat((float) stats->written_packets / secs, stream);
 		fprintf(stream, "   bytes     : ");
-		ps_stats_text_hbytes(stats->written_bytes / (size_t) (secs + 0.5f), stream);
-		fprintf(stream, "   %% waited  : %.2f %%\n", 100.0f * ((float) stats->write_wait_usec / (float) stats->utime));
+		ps_stats_text_hbytes(stats->written_bytes / (size_t) (secs + 0.5), stream);
+		fprintf(stream, "   %% waited  : %.2f %%\n", 100.0 * ((double) stats->write_wait_nsec / (double) stats->utime));
 		fprintf(stream, "  read\n");
 		fprintf(stream, "   packets   : "); 
 		ps_stats_text_hfloat((float) stats->read_packets / secs, stream);
 		fprintf(stream, "   bytes     : "); 
-		ps_stats_text_hbytes(stats->read_bytes / (size_t) (secs + 0.5f), stream);
-		fprintf(stream, "   %% waited  : %.2f %%\n", 100.0f * ((float) stats->read_wait_usec / (float) stats->utime));
+		ps_stats_text_hbytes(stats->read_bytes / (size_t) (secs + 0.5), stream);
+		fprintf(stream, "   %% waited  : %.2f %%\n", 100.0 * ((double) stats->read_wait_nsec / (double) stats->utime));
 	}
 
 	fprintf(stream, " totals\n");
