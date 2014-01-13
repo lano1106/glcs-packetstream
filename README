@@ -1,0 +1,6 @@
+glcs-packetstream is a fork by Olivier Langlois from packetstream v0.1.4 written by Pyry Haulos.
+
+It is a slightly refactored version of the original library. You can discover the differences from
+the original by consulting the NEWS file. This package is also a prerequisite to build glcs
+https://github.com/lano1106/glcs
+
