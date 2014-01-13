@@ -1,0 +1,8 @@
+1.0.0 (2014/01/12)
+	- Officially forked from original packetstream by Pyry Haulos
+	- Optimize branches prediction
+	- Use logical short-circuit operators in logical expressions
+	- Only set packet size only once all necessary memory has been reserved.
+	  This keeps the packet cancellable longer in of an unexpected error.
+	- Use monotonic clock with nanosec precision.
+
