@@ -303,6 +303,40 @@ int ps_buffer_destroy(ps_buffer_t *buffer)
 	return 0;
 }
 
+static inline int move_pos(size_t pos, size_t buf_size, size_t packet_size)
+{
+	pos = (sizeof(struct ps_packet_header_s) +
+			    pos + packet_size) % buf_size;
+	if (unlikely(pos + sizeof(struct ps_packet_header_s) > buf_size))
+		pos = 0;
+	return pos;
+}
+
+int ps_buffer_drain(ps_buffer_t *buffer)
+{
+	__PS_BUFFER_VARS(buffer)
+	struct ps_packet_header_s *header;
+
+	if (pthread_mutex_lock(&state->read_mutex))
+		return EINVAL;
+
+	while (!sem_trywait(&state->written_packets)) {
+		size_t pos = state->read_next;
+		header = (struct ps_packet_header_s *) &buffer->buffer[pos];
+		header->flags |= PS_PACKET_HEADER_READ;
+		state->read_next = move_pos(state->read_next, state->size, header->size);
+		if (state->read_pos == pos) {
+			if (unlikely(sem_post(&state->read_packets)))
+				abort();
+			state->read_pos = state->read_next;
+		}
+	}
+
+	pthread_mutex_unlock(&state->read_mutex);
+
+	return 0;
+}
+
 int ps_packet_init(ps_packet_t *packet, ps_buffer_t *buffer)
 {
 	__PS_BUFFER_CHECK(buffer)
@@ -364,9 +398,9 @@ int ps_packet_openread(ps_packet_t *packet, ps_flags_t flags)
 	unsigned int tries = 0;
 
 	if (flags & PS_PACKET_TRY) {
-		if (pthread_mutex_trylock(&state->read_mutex))
+		if (unlikely(pthread_mutex_trylock(&state->read_mutex)))
 			return EBUSY;
-	} else if (pthread_mutex_lock(&state->read_mutex))
+	} else if (unlikely(pthread_mutex_lock(&state->read_mutex)))
 		return EINVAL;
 	__PS_CHECK_CANCEL_READ(state)
 
@@ -401,11 +435,7 @@ retry:
 	packet->pos = 0;
 
 	header = (struct ps_packet_header_s *) packet->header;
-
-	state->read_next = (sizeof(struct ps_packet_header_s) +
-			    state->read_next + header->size) % state->size;
-	if (state->read_next + sizeof(struct ps_packet_header_s) > state->size)
-		state->read_next = 0;
+	state->read_next = move_pos(state->read_next, state->size, header->size);
 
 	pthread_mutex_unlock(&state->read_mutex);
 
@@ -421,7 +451,7 @@ int ps_packet_openwrite(ps_packet_t *packet, ps_flags_t flags)
 	if (flags & PS_PACKET_TRY) {
 		if (pthread_mutex_trylock(&state->write_mutex))
 			return EBUSY;
-	} else if (pthread_mutex_lock(&state->write_mutex))
+	} else if (unlikely(pthread_mutex_lock(&state->write_mutex)))
 		return EINVAL;
 	__PS_CHECK_CANCEL_WRITE(state)
 
@@ -597,10 +627,7 @@ int ps_packet_closeread(ps_packet_t *packet)
 		pos = packet->buffer_pos;
 
 		do {
-			pos = (pos + sizeof(struct ps_packet_header_s) +
-			       header->size) % state->size;
-			if (pos + sizeof(struct ps_packet_header_s) > state->size)
-				pos = 0;
+			pos = move_pos(pos, state->size, header->size);
 
 			if (unlikely(sem_post(&state->read_packets)))
 				abort();
@@ -616,7 +643,7 @@ int ps_packet_closeread(ps_packet_t *packet)
 	ps_packet_fakedma_freeall(packet);
 
 	packet->header = NULL;
-	packet->flags = 0;
+	packet->flags  = 0;
 
 	return 0;
 }
@@ -649,10 +676,7 @@ int ps_packet_closewrite(ps_packet_t *packet)
 		pos = packet->buffer_pos;
 
 		do {
-			pos = (pos + sizeof(struct ps_packet_header_s) +
-			       header->size) % state->size;
-			if (pos + sizeof(struct ps_packet_header_s) > state->size)
-				pos = 0;
+			pos = move_pos(pos, state->size, header->size);
 
 			if (unlikely(sem_post(&state->written_packets)))
 				abort();

@@ -343,6 +343,9 @@ __PS_PUBLIC int ps_buffer_stats(ps_buffer_t *buffer, ps_stats_t *stats);
  */
 __PS_PUBLIC int ps_buffer_getshmid(ps_buffer_t *buffer, int *shmid);
 
+__PS_PUBLIC int ps_buffer_drain(ps_buffer_t *buffer);
+
+
 /**  \} */
 
 /**
