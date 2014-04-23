@@ -1,8 +1,7 @@
 /**
- * \file examples/crc32.c
- * \brief example app which uses 'packetstream' to distribute CRC32 calculation jobs
- * \author Pyry Haulos <pyry.haulos@gmail.com>
- * \date 2007-2008
+ * \file examples/drain_test.c
+ * \author Olivier Langlois <olivier@trillion01.com>
+ * \date 2014
  * For conditions of distribution and use, see copyright notice in packetstream.h
  */
 

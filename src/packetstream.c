@@ -322,11 +322,12 @@ int ps_buffer_state_text(ps_buffer_t *buffer, FILE *stream)
 	if (!buffer || !stream)
 		return EINVAL;
 
-	fprintf(stream, "size: %zd, read_pos: %zd, write_pos: %zd\n",
-		state->size, state->read_pos, state->write_pos);
-	fprintf(stream, "read_next: %zd, write_next: %zd, read_first: %zd\n",
-		state->read_next, state->write_next, state->read_first);
-	fprintf(stream, "free_bytes: %ld\n", state->free_bytes);
+	fprintf(stream, "size: %zd, read_pos: %zd, write_pos: %zd\n"
+			"read_next: %zd, write_next: %zd, read_first: %zd\n"
+			"free_bytes: %ld\n",
+		state->size, state->read_pos, state->write_pos,
+		state->read_next, state->write_next, state->read_first,
+		state->free_bytes);
 
 	sem_getvalue(&state->written_packets, &num_pkts);
 	pos = state->read_next;
