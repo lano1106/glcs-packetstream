@@ -312,13 +312,60 @@ static inline int move_pos(size_t pos, size_t buf_size, size_t packet_size)
 	return pos;
 }
 
+int ps_buffer_state_text(ps_buffer_t *buffer, FILE *stream)
+{
+	size_t pos;
+	int num_pkts, i;
+	int num_bytes;
+	struct ps_packet_header_s *header;
+	__PS_BUFFER_VARS(buffer)
+	if (!buffer || !stream)
+		return EINVAL;
+
+	fprintf(stream, "size: %zd, read_pos: %zd, write_pos: %zd\n",
+		state->size, state->read_pos, state->write_pos);
+	fprintf(stream, "read_next: %zd, write_next: %zd, read_first: %zd\n",
+		state->read_next, state->write_next, state->read_first);
+	fprintf(stream, "free_bytes: %ld\n", state->free_bytes);
+
+	sem_getvalue(&state->written_packets, &num_pkts);
+	pos = state->read_next;
+	num_bytes = 0;
+	for (i = 0; i < num_pkts; ++i) {
+		header = (struct ps_packet_header_s *)&buffer->buffer[pos];
+		num_bytes += header->size;
+		pos = move_pos(pos, state->size, header->size);
+	}
+	fprintf(stream, "unread packets: %d, num_bytes: %d\n",
+		num_pkts, num_bytes);
+
+	sem_getvalue(&state->read_packets, &num_pkts);
+	pos = state->read_first;
+	num_bytes = 0;
+	for (i = 0; i < num_pkts; ++i) {
+		header = (struct ps_packet_header_s *)&buffer->buffer[pos];
+		num_bytes += header->size;
+		pos = move_pos(pos, state->size, header->size);
+	}
+	fprintf(stream, "pending free packets: %d, num_bytes: %d\n",
+		num_pkts, num_bytes);
+
+	return 0;
+}
+
 int ps_buffer_drain(ps_buffer_t *buffer)
 {
+	int res = 0;
 	__PS_BUFFER_VARS(buffer)
 	struct ps_packet_header_s *header;
 
 	if (pthread_mutex_lock(&state->read_mutex))
-		return EINVAL;
+		return -EINVAL;
+
+	if (pthread_mutex_lock(&state->read_close_mutex)) {
+		res = -EINVAL;
+		goto err;
+	}
 
 	while (!sem_trywait(&state->written_packets)) {
 		size_t pos = state->read_next;
@@ -329,12 +376,14 @@ int ps_buffer_drain(ps_buffer_t *buffer)
 			if (unlikely(sem_post(&state->read_packets)))
 				abort();
 			state->read_pos = state->read_next;
+			++res;
 		}
 	}
-
+	pthread_mutex_unlock(&state->read_close_mutex);
+err:
 	pthread_mutex_unlock(&state->read_mutex);
 
-	return 0;
+	return res;
 }
 
 int ps_packet_init(ps_packet_t *packet, ps_buffer_t *buffer)
@@ -1151,7 +1200,6 @@ void ps_stats_text_hnum(size_t num, FILE *stream)
 	else
 		fprintf(stream, "%d\n", (int) num);
 }
-
 
 int ps_stats_text(ps_stats_t *stats, FILE *stream)
 {

@@ -333,6 +333,8 @@ __PS_PUBLIC int ps_buffer_cancel(ps_buffer_t *buffer);
  * \return 0 on success otherwise an error code
  */
 __PS_PUBLIC int ps_buffer_stats(ps_buffer_t *buffer, ps_stats_t *stats);
+
+__PS_PUBLIC int ps_buffer_state_text(ps_buffer_t *buffer, FILE *stream);
 /**
  * \brief get buffer shared memory id
  *
